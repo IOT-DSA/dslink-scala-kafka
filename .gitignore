@@ -3,6 +3,8 @@
 
 # sbt specific
 .cache
+.cache-main
+.cache-tests
 .history
 .lib/
 dist/*
@@ -13,5 +15,15 @@ project/boot/
 project/plugins/project/
 
 # Scala-IDE specific
+.classpath
+.project
 .scala_dependencies
 .worksheet
+.settings
+.README.md.html
+/bin/
+
+# DSA specific
+.key
+nodes.json
+nodes.json.bak
