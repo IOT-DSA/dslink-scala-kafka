@@ -97,7 +97,8 @@ object Main extends DSLinkHandler with Controller {
   /**
    * Adds a subscription and starts streaming data.
    */
-  def addSubscription(connName: String, topic: String, partition: Int, offsetType: OffsetType.OffsetType, customOffset: Long) = {
+  def addSubscription(connName: String, topic: String, partition: Int,
+                      offsetType: OffsetType.OffsetType, customOffset: Long, emitDelay: Long) = {
     val connection = connections(connName)
     val brokerUrl = connection.brokerUrl
 
@@ -120,7 +121,8 @@ object Main extends DSLinkHandler with Controller {
 
     val consumer = new MessageConsumer(leader.host, leader.port, topic, partition, offset)
 
-    val subscription = Subscription(connName, topic, partition, offsetType, customOffset, partitionNode, consumer)
+    val subscription = Subscription(connName, topic, partition, offsetType, customOffset, emitDelay,
+      partitionNode, consumer)
     subscriptions += subscription.key -> subscription
 
     val removeSubscriptionNode = topicNode
@@ -134,8 +136,8 @@ object Main extends DSLinkHandler with Controller {
       consumer.start { data =>
         log.debug(s"Message received: ${data.length} bytes")
         partitionNode.setValue(new Value(new String(data)))
-        if (consumerOptions.emitDelay > 0)
-          Thread.sleep(consumerOptions.emitDelay)
+        if (emitDelay > 0)
+          Thread.sleep(emitDelay)
       }
     }
 

@@ -19,7 +19,7 @@ object OffsetType extends Enumeration {
  * Kafka topic/partition subscription.
  */
 case class Subscription(connName: String, topic: String, partition: Int,
-                        offsetType: OffsetType.OffsetType, customOffset: Long,
+                        offsetType: OffsetType.OffsetType, customOffset: Long, emitDelay: Long,
                         node: Node, consumer: MessageConsumer) {
   val key = SubscriptionKey(connName, topic, partition)
 }
@@ -41,6 +41,6 @@ trait Controller {
 
   def subscriptions: Map[SubscriptionKey, Subscription]
   def addSubscription(connName: String, topic: String, partition: Int,
-                      offsetType: OffsetType.OffsetType, customOffset: Long): Subscription
+                      offsetType: OffsetType.OffsetType, customOffset: Long, emitDelay: Long): Subscription
   def removeSubscription(connName: String, topic: String, partition: Int): Unit
 }

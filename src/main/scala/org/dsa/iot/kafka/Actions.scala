@@ -43,13 +43,15 @@ object Actions {
           throw new IllegalArgumentException(s"Duplicate subscription for topic $topic and partition $partition")
         val offsetType = OffsetType withName event.getParam[String]("offsetType")
         val customOffset = event.getParam[Number]("offset").longValue
+        val emitDelay = event.getParam[Number]("emitDelay").longValue
 
-        controller.addSubscription(connName, topic, partition.intValue, offsetType, customOffset)
+        controller.addSubscription(connName, topic, partition.intValue, offsetType, customOffset, emitDelay)
       }
     }).addParameter(STRING("topic"))
       .addParameter(NUMBER("partition") default 0)
       .addParameter(ENUMS(OffsetType)("offsetType") default "Latest")
       .addParameter(NUMBER("offset") description "Custom offset" default 0)
+      .addParameter(NUMBER("emitDelay") description "Delay between two messages" default 0)
 
   /**
    * Publish Message action.
