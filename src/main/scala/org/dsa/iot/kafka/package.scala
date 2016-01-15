@@ -21,6 +21,8 @@ package object kafka {
         value
     }
   }
+  
+  def ENUMS(enum: Enumeration) = ValueType.makeEnum(enum.values.map(_.toString).asJava)
 
   implicit class RichValueType(val vt: ValueType) extends AnyVal {
     def apply(name: String) = new Parameter(name, vt)

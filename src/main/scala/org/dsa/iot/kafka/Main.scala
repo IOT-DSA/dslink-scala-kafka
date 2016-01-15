@@ -1,31 +1,26 @@
 package org.dsa.iot.kafka
 
 import scala.collection.JavaConverters.mapAsScalaMapConverter
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.future
+
 import org.dsa.iot.dslink.{ DSLink, DSLinkFactory, DSLinkHandler }
 import org.dsa.iot.dslink.node.Node
-import org.dsa.iot.dslink.node.value.Value
+import org.dsa.iot.dslink.node.value.{ Value, ValueType }
 import org.slf4j.LoggerFactory
-import kafka.common.TopicAndPartition
-import kafka.producer.{ KeyedMessage, Producer, ProducerConfig }
-import org.dsa.iot.dslink.node.value.ValueType
 
-trait Controller {
-  def addConnection(parent: Node, name: String, brokerUrl: String): Unit
-  def removeConnection(node: Node): Unit
-  def publish(brokerUrl: String, topic: String, message: String): Unit
-  def consumers: Map[String, Map[TopicAndPartition, MessageConsumer]]
-  def addSubcription(parent: Node, topic: String, partition: Int, offsetType: String, offset: Long): Unit
-}
+import kafka.producer.{ KeyedMessage, Producer, ProducerConfig }
 
 /**
  * Kafka DSLink.
  */
 object Main extends DSLinkHandler with Controller {
   import Settings._
+  import ValueType._
 
   private val log = LoggerFactory.getLogger(getClass)
 
-  var consumers = Map.empty[String, Map[TopicAndPartition, MessageConsumer]]
+  private var root: Node = null
 
   /* DSLinkHandler API */
 
@@ -36,51 +31,58 @@ object Main extends DSLinkHandler with Controller {
     init(link)
   }
 
-  /* implementation */
+  /* Controller API */
 
-  private def init(link: DSLink) = {
-    val root = link.getNodeManager.getSuperRoot
-
-    val addConnectionNode = root
-      .createChild("addConnection")
-      .setDisplayName("Add Connection")
-      .setAction(Actions.addConnectionAction(root, this))
-      .build
-  }
+  var connections = Map.empty[String, Connection]
+  var subscriptions = Map.empty[SubscriptionKey, Subscription]
 
   /**
-   * Creates a new Kafka connection node.
+   * Creates a new Kafka connection.
    */
-  def addConnection(parent: Node, name: String, brokerUrl: String) = {
-    val connNode = parent.createChild(name).setAttribute("brokerUrl", new Value(brokerUrl)).build
-    connNode.createChild("brokerUrl").setDisplayName("Broker URL")
-      .setValueType(ValueType.STRING).setValue(new Value(brokerUrl)).build
+  def addConnection(name: String, brokerUrl: String) = {
+    log.info(s"Adding new connection '$name' for '$brokerUrl'")
+    val brokerUrlVal = new Value(brokerUrl)
+    val connNode = root.createChild(name).build
+    connNode.createChild("brokerUrl").setDisplayName("Broker URL").setValueType(STRING).setValue(brokerUrlVal).build
 
     val addSubcsriptionNode = connNode
       .createChild("addSubscription")
       .setDisplayName("Subscribe")
-      .setAction(Actions.addSubscriptionAction(connNode, this))
+      .setAction(Actions.addSubscriptionAction(name, this))
       .build
 
     val publishNode = connNode
       .createChild("publish")
       .setDisplayName("Publish")
-      .setAction(Actions.publishAction(connNode, this))
+      .setAction(Actions.publishAction(brokerUrl, this))
       .build
 
     val removeConnectionNode = connNode
       .createChild("removeConnection")
       .setDisplayName("Remove Connection")
-      .setAction(Actions.removeConnectionAction(connNode, this))
+      .setAction(Actions.removeConnectionAction(name, this))
       .build
+
+    val connection = Connection(name, brokerUrl, connNode)
+    connections += name -> connection
+    connection
   }
 
-  def removeConnection(node: Node) = node.getParent.removeChild(node)
+  /**
+   * Removes a connection.
+   */
+  def removeConnection(name: String) = {
+    connections -= name
+    root.removeChild(name)
+    log.info(s"Connection '$name' removed")
+  }
 
   /**
    * Publishes a message onto a Kafka topic
    */
   def publish(brokerUrl: String, topic: String, message: String) = {
+    log.info(s"Publishing message onto $brokerUrl/$topic")
+
     val props = producerOptions.newProperties
     props.put("metadata.broker.list", brokerUrl)
 
@@ -95,40 +97,79 @@ object Main extends DSLinkHandler with Controller {
   /**
    * Adds a subscription and starts streaming data.
    */
-  def addSubcription(parent: Node, topic: String, partition: Int, offsetType: String, customOffset: Long) = {
+  def addSubscription(connName: String, topic: String, partition: Int, offsetType: OffsetType.OffsetType, customOffset: Long) = {
+    val connection = connections(connName)
+    val brokerUrl = connection.brokerUrl
 
-    val brokerUrl = parent.getAttribute("brokerUrl")
     log.debug(s"Searching for leader for broker $brokerUrl topic $topic partition $partition")
-    val hosts = brokerUrl.getString split "," map (_.trim)
+    val hosts = brokerUrl split "," map (_.trim)
     val leader = KafkaUtils.findLeader(hosts, topic, partition) getOrElse (
       throw new IllegalArgumentException("Can't find leader for topic and partition"))
     log.info(s"Kafka leader found: $leader")
 
-    val topicNode = parent.getChildren.asScala.getOrElse(topic, parent.createChild(topic).build)
-
+    log.info(s"Adding new subscription for $topic/$partition with offset $offsetType")
+    val connNode = connection.node
+    val topicNode = connNode.getChildren.asScala.getOrElse(topic, connNode.createChild(topic).build)
     val partitionNode = topicNode.createChild(s"#$partition").setValueType(ValueType.STRING).build
 
     val offset = offsetType match {
-      case "Earliest" => kafka.api.OffsetRequest.EarliestTime
-      case "Latest"   => kafka.api.OffsetRequest.LatestTime
-      case _          => customOffset
+      case OffsetType.Earliest => kafka.api.OffsetRequest.EarliestTime
+      case OffsetType.Latest   => kafka.api.OffsetRequest.LatestTime
+      case _                   => customOffset
     }
 
-    val consumer = new MessageConsumer(leader.host, leader.port, topic, partition, customOffset)
+    val consumer = new MessageConsumer(leader.host, leader.port, topic, partition, offset)
 
-    val tpmc = consumers.getOrElse(parent.getName, Map.empty[TopicAndPartition, MessageConsumer]) + (TopicAndPartition(topic, partition) -> consumer)
-    consumers += parent.getName -> tpmc
+    val subscription = Subscription(connName, topic, partition, offsetType, customOffset, partitionNode, consumer)
+    subscriptions += subscription.key -> subscription
 
     val removeSubscriptionNode = topicNode
       .createChild("removeSubscription")
       .setDisplayName("Unsubscribe")
-      .setAction(Actions.removeSubscriptionAction(partitionNode, this))
+      .setAction(Actions.removeSubscriptionAction(connName, topic, this))
       .build
 
-    consumer.start { data =>
-      log.debug(s"Message received: ${data.length} bytes")
-      partitionNode.setValue(new Value(new String(data)))
+    future {
+      log.info(s"Streaming started for $topic/$partition with offset $offsetType")
+      consumer.start { data =>
+        log.debug(s"Message received: ${data.length} bytes")
+        partitionNode.setValue(new Value(new String(data)))
+        if (consumerOptions.emitDelay > 0)
+          Thread.sleep(consumerOptions.emitDelay)
+      }
     }
+
+    subscription
+  }
+
+  /**
+   * Removes a subscription.
+   */
+  def removeSubscription(connName: String, topic: String, partition: Int) = {
+    val key = SubscriptionKey(connName, topic, partition)
+    val subscription = subscriptions(key)
+    future { subscription.consumer.stop }
+    subscriptions -= key
+
+    val partitionNode = subscription.node
+    val topicNode = partitionNode.getParent
+    topicNode.removeChild(partitionNode)
+    if (topicNode.getChildren.size < 2)
+      topicNode.getParent.removeChild(topicNode)
+
+    log.info(s"Subscription $connName/$topic/$partition removed")
+  }
+
+  /* implementation */
+
+  private def init(link: DSLink) = {
+    root = link.getNodeManager.getSuperRoot
+
+    val addConnectionNode = root
+      .createChild("addConnection")
+      .setDisplayName("Add Connection")
+      .setAction(Actions.addConnectionAction(this))
+      .build
   }
 
   /**

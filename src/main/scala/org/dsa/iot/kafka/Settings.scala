@@ -18,6 +18,7 @@ object Settings {
     val fetchSize = node.getInt("fetchSize")
     val clientId = node.getString("clientId")
     val delayOnEmpty = node.getInt("delayOnEmpty")
+    val emitDelay = node.getInt("emitDelay")
   }
 
   object producerOptions {
