@@ -16,14 +16,18 @@ organization := "org.iot-dsa"
 
 version := APP_VERSION
 
-enablePlugins(JavaAppPackaging)
-
 scalaVersion := SCALA_VERSION
 
 scalacOptions ++= Seq("-feature", "-unchecked", "-deprecation", "-Xlint", 
 	"-Ywarn-dead-code", "-language:_", "-target:jvm-1.7", "-encoding", "UTF-8")
 
 run in Compile <<= Defaults.runTask(fullClasspath in Compile, mainClass in (Compile, run), runner in (Compile, run))
+
+// packaging options
+
+enablePlugins(JavaAppPackaging)
+
+mappings in Universal += file("dslink.json") -> "dslink.json"
 	
 libraryDependencies ++= Seq(
   "org.iot-dsa"         % "dslink"                  % DSA_VERSION,
