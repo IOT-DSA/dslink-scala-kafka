@@ -23,7 +23,7 @@ class MessageConsumer(val host: String, val port: Int, val topic: String, val pa
     else KafkaUtils.getLastOffset(consumer, topic, partition, offset, clientId)
   log.info("Initial offset retrieved: " + readOffset)
 
-  def start(listener: Array[Byte] => Unit) = {
+  def start(listener: (Array[Byte], Long) => Unit) = {
     flag.set(true)
 
     while (flag.get) {
@@ -52,7 +52,7 @@ class MessageConsumer(val host: String, val port: Int, val topic: String, val pa
           val data = Array.fill[Byte](payload.limit)(0)
           payload.get(data)
 
-          listener(data)
+          listener(data, readOffset)
         }
       }
 

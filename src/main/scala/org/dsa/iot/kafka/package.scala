@@ -2,11 +2,36 @@ package org.dsa.iot
 
 import scala.collection.JavaConverters._
 
-import org.dsa.iot.dslink.node.actions.{ ActionResult, EditorType, Parameter }
+import org.dsa.iot.dslink.node.{ Node, NodeBuilder, Permission, Writable }
+import org.dsa.iot.dslink.node.actions.{ Action, ActionResult, EditorType, Parameter, ResultType }
 import org.dsa.iot.dslink.node.value.{ Value, ValueType }
+import org.dsa.iot.dslink.util.handler.Handler
 import org.dsa.iot.dslink.util.json.{ JsonArray, JsonObject }
 
+/**
+ * Helper functions and types for Kafka DSLink.
+ */
 package object kafka {
+
+  type ActionHandler = ActionResult => Unit
+
+  /* Action */
+
+  def action(handler: ActionHandler,
+             parameters: Iterable[Parameter] = Nil,
+             results: Iterable[Parameter] = Nil,
+             permission: Permission = Permission.READ,
+             resultType: ResultType = ResultType.VALUES): Action = {
+    val a = new Action(permission, new Handler[ActionResult] {
+      def handle(event: ActionResult) = handler(event)
+    })
+    parameters foreach a.addParameter
+    results foreach a.addResult
+    a.setResultType(resultType)
+    a
+  }
+
+  /* ActionResult */
 
   implicit def stringExtractor(v: Value) = v.getString
   implicit def numberExtractor(v: Value) = v.getNumber
@@ -21,12 +46,16 @@ package object kafka {
         value
     }
   }
-  
+
+  /* ValueType */
+
   def ENUMS(enum: Enumeration) = ValueType.makeEnum(enum.values.map(_.toString).asJava)
 
   implicit class RichValueType(val vt: ValueType) extends AnyVal {
     def apply(name: String) = new Parameter(name, vt)
   }
+
+  /* Parameter */
 
   implicit class RichParameter(val param: Parameter) extends AnyVal {
     def default(value: Any) = param having (_.setDefaultValue(anyToValue(value)))
@@ -34,6 +63,61 @@ package object kafka {
     def editorType(value: EditorType) = param having (_.setEditorType(value))
     def placeHolder(value: String) = param having (_.setPlaceHolder(value))
     def meta(value: JsonObject) = param having (_.setMetaData(value))
+  }
+
+  /* Node */
+
+  implicit class RichNode(val node: Node) extends AnyVal {
+    def nodeType = Option(node.getConfig("nodeType")) map (_.getString)
+    def children = node.getChildren.asScala.toMap
+  }
+
+  /* NodeBuilder */
+
+  /**
+   * Pimps up NodeBuilder by providing Scala fluent syntax.
+   */
+  implicit class RichNodeBuilder(val nb: NodeBuilder) extends AnyVal {
+
+    def display(name: String) = nb having (_.setDisplayName(name))
+
+    def attributes(tpls: (String, Value)*) = {
+      tpls foreach (t => nb.setAttribute(t._1, t._2))
+      nb
+    }
+
+    def config(configs: (String, Value)*) = {
+      configs foreach (c => nb.setConfig(c._1, c._2))
+      nb
+    }
+
+    def roConfig(configs: (String, Value)*) = {
+      configs foreach (c => nb.setRoConfig(c._1, c._2))
+      nb
+    }
+
+    def nodeType(nType: String) = nb having (_.setConfig("nodeType", anyToValue(nType)))
+
+    def valueType(vType: ValueType) = nb having (_.setValueType(vType))
+
+    def value(value: Value) = nb having (_.setValue(value))
+
+    def hidden(flag: Boolean) = nb having (_.setHidden(flag))
+
+    def profile(p: String) = nb having (_.setProfile(p))
+
+    def meta(md: Any) = nb having (_.setMetaData(md))
+
+    def serializable(flag: Boolean) = nb having (_.setSerializable(flag))
+
+    def writable(w: Writable) = nb having (_.setWritable(w))
+
+    def action(action: Action): NodeBuilder = nb having (_.setAction(action))
+
+    def action(handler: ActionHandler, permission: Permission = Permission.READ): NodeBuilder =
+      action(new Action(permission, new Handler[ActionResult] {
+        def handle(event: ActionResult) = handler(event)
+      }))
   }
 
   /**
