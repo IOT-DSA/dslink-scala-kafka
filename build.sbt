@@ -4,7 +4,7 @@ val APP_VERSION = "0.1.0-SNAPSHOT"
 
 val SCALA_VERSION = "2.10.5"
 
-val DSA_VERSION = "0.13.0"
+val DSA_VERSION = "0.14.0"
 
 val KAFKA_VERSION = "0.8.2.2"
 
