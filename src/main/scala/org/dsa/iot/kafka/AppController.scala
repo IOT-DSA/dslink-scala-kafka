@@ -79,19 +79,15 @@ class AppController(root: Node) {
     val customOffset = node.getAttribute("customOffset").getNumber.longValue
     val emitDelay = node.getAttribute("emitDelay").getNumber.longValue
 
-    log.debug(s"Searching for leader for broker $brokerUrl topic $topic partition $partition")
     val hosts = brokerUrl split "," map (_.trim)
-    val leader = KafkaUtils.findLeader(hosts, topic, partition) getOrElse (
-      throw new IllegalArgumentException("Can't find leader for topic and partition"))
-    log.info(s"Kafka leader found: $leader")
 
     val offset = offsetType match {
       case Earliest => kafka.api.OffsetRequest.EarliestTime
       case Latest   => kafka.api.OffsetRequest.LatestTime
-      case _                   => customOffset
+      case _        => customOffset
     }
 
-    val consumer = new MessageConsumer(leader.host, leader.port, topic, partition, offset)
+    val consumer = new MessageConsumer(hosts, topic, partition, offset)
     node.setMetaData(consumer)
 
     future {

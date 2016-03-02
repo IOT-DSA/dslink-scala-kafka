@@ -1,17 +1,20 @@
 package org.dsa.iot
 
 import scala.collection.JavaConverters._
-
+import scala.util.{ Failure, Success, Try }
 import org.dsa.iot.dslink.node.{ Node, NodeBuilder, Permission, Writable }
 import org.dsa.iot.dslink.node.actions.{ Action, ActionResult, EditorType, Parameter, ResultType }
 import org.dsa.iot.dslink.node.value.{ Value, ValueType }
 import org.dsa.iot.dslink.util.handler.Handler
 import org.dsa.iot.dslink.util.json.{ JsonArray, JsonObject }
+import org.slf4j.LoggerFactory
 
 /**
  * Helper functions and types for Kafka DSLink.
  */
 package object kafka {
+
+  private val log = LoggerFactory.getLogger(getClass)
 
   type ActionHandler = ActionResult => Unit
 
@@ -215,5 +218,23 @@ package object kafka {
       body
       result
     }
+  }
+
+  /**
+   * Retries executing some code up to the specified number of times.
+   *
+   * @param n how many times to try before throwing an exception.
+   * @param timeout time to wait before retrying (if `exponential` is set, this will be the initial timeout).
+   * @param exponential if `true`, then each subsequent timeout will be twice as long as the previous one.
+   */
+  @annotation.tailrec
+  def retry[T](n: Int, timeout: Long = 10, exponential: Boolean = true)(fn: => T): T = Try { fn } match {
+    case Success(x) => x
+    case _ if n > 1 =>
+      log.warn(s"Operation failed, waiting for $timeout ms to retry")
+      if (timeout > 0) Thread.sleep(timeout)
+      val newTimeout = if (exponential) timeout * 2 else timeout
+      retry(n - 1, newTimeout, exponential)(fn)
+    case Failure(e) => throw e
   }
 }
