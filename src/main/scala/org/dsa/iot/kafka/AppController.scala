@@ -3,14 +3,16 @@ package org.dsa.iot.kafka
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.future
 import scala.util.control.NonFatal
-
 import org.dsa.iot.dslink.node.Node
 import org.dsa.iot.dslink.node.actions.ActionResult
 import org.dsa.iot.dslink.node.actions.table.Row
 import org.dsa.iot.dslink.node.value.ValueType
 import org.slf4j.LoggerFactory
-
 import kafka.producer.{ KeyedMessage, Producer, ProducerConfig }
+import java.text.SimpleDateFormat
+import scala.util._
+
+import java.text.ParseException
 
 /**
  * Consumer offset type.
@@ -29,6 +31,9 @@ class AppController(root: Node) {
   import OffsetType._
 
   private val log = LoggerFactory.getLogger(getClass)
+
+  private val timeFormatters = List("yyyy-MM-dd'T'HH:mm:ssz", "yyyy-MM-dd'T'HH:mm:ss",
+    "yyyy-MM-dd'T'HH:mmz", "yyyy-MM-dd'T'HH:mm", "yyyy-MM-dd") map (p => new SimpleDateFormat(p))
 
   initRoot
 
@@ -174,14 +179,17 @@ class AppController(root: Node) {
    * Get Topic Info.
    */
   def getTopicInfo = action(
-    parameters = List(STRING("topic"), NUMBER("partition") default 0),
-    results = List(STRING("errorInfo"), STRING("leader"), NUMBER("firstOffset"), NUMBER("lastOffset")),
+    parameters = List(STRING("topic"), NUMBER("partition") default 0,
+      STRING("time") default timeFormatters(0).format(new java.util.Date)),
+    results = List(STRING("errorInfo"), STRING("leader"), NUMBER("firstOffset"), NUMBER("lastOffset"),
+      STRING("timeOffset")),
     handler = event => {
       val connNode = event.getNode.getParent
       val brokerUrl = connNode.getConfig("brokerUrl").getString
 
       val topic = event.getParam[String]("topic", !_.isEmpty, "Topic cannot be empty").trim
       val partitionId = event.getParam[Number]("partition", _.intValue >= 0, "Invalid partition").intValue
+      val timeStr = event.getParam[String]("time")
 
       import KafkaUtils._
       val values = try {
@@ -189,14 +197,21 @@ class AppController(root: Node) {
         val leader = retry(5)(findLeader(brokers, topic, partitionId).map(formatBroker).getOrElse("n/a"))
         val earliest = retry(5)(getEarliestOffset(brokers, topic, partitionId))
         val latest = retry(5)(getLatestOffset(brokers, topic, partitionId))
-        List("-", leader, earliest, latest)
+        val offset = Option(timeStr).filterNot(_.trim.isEmpty).map { str =>
+          val time = parseTime(str)
+          retry(5)(getOffsetBefore(brokers, topic, partitionId, time.getTime)).map(_.toString) getOrElse "unknown"
+        } getOrElse "-"
+        List("-", leader, earliest, latest, offset)
       } catch {
+        case e: ParseException =>
+          log.error("Invalid time format: " + timeStr + ", should be ISO")
+          List("Invalid time format", "n/a", null, null, "")
         case e: NumberFormatException =>
           log.error("Invalid broker url: " + brokerUrl)
-          List("Invalid broker URL", "n/a", null, null)
+          List("Invalid broker URL", "n/a", null, null, "")
         case NonFatal(e) =>
-          log.error("Error fetching topic information", e)
-          List(getErrorInfo(e), "n/a", null, null)
+          log.error("Error fetching topic information")
+          List(getErrorInfo(e), "n/a", null, null, "")
       }
 
       val row = Row.make(values.map(anyToValue): _*)
@@ -257,4 +272,15 @@ class AppController(root: Node) {
           log.info(s"Subscription ${topicNode.getName}/$partition removed")
         }
     })
+
+  /**
+   * Tries to parse a string into a time using one of the available formats.
+   */
+  @throws(classOf[ParseException])
+  def parseTime(str: String) = timeFormatters.foldLeft[Try[java.util.Date]](Failure(null)) { (parsed, fmt) =>
+    parsed match {
+      case yes @ Success(_) => yes
+      case no @ Failure(_)  => Try(fmt.parse(str))
+    }
+  } get
 }
